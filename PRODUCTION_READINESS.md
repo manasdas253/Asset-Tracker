@@ -1,6 +1,10 @@
 # AssetTrack production-readiness notes
 
-AssetTrack is an enterprise asset register with persistent QR identities, database-backed lifecycle visibility, and server-recorded activity history. The current build is intentionally scoped to **Phase 1: no login**. Authentication and authorization boundaries remain available in the template, but the product routes use public procedures until the access model is finalized.
+AssetTrack is an enterprise asset register with persistent QR identities, database-backed lifecycle visibility, and server-recorded activity history. Internal workspace routes require Google sign-in. Public QR lookup, checkout, and damage-report flows remain available through their opaque QR token.
+
+## Google authentication
+
+Create a Google Cloud OAuth 2.0 **Web application** client. Add `${APP_BASE_URL}/api/auth/google/callback` as its authorized redirect URI, then configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_BASE_URL`, `JWT_SECRET`, `GOOGLE_ALLOWED_EMAILS`, and `GOOGLE_ADMIN_EMAILS`. Production login denies every email not listed in `GOOGLE_ALLOWED_EMAILS`; addresses in `GOOGLE_ADMIN_EMAILS` receive the existing `admin` role. No database migration is required because the existing `users` table stores Google identities and roles.
 
 ## Local setup
 

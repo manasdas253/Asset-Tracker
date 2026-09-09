@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import QRCode from "qrcode";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import {
   appSettings,
   assetAssignments,
@@ -33,6 +33,7 @@ import {
   getImportHistory,
   getNotificationSummary,
   getRecentActivity,
+  getCurrentMovementReport,
   listAssets,
   exportAssets,
   parseAssetDates,
@@ -127,13 +128,13 @@ function parseCsv(csv: string) {
 }
 
 export const assetRouter = router({
-  dashboard: publicProcedure.query(() => getDashboardData()),
-  catalog: publicProcedure.query(() => getCatalog()),
-  notifications: publicProcedure.query(() => getNotificationSummary()),
-  activity: publicProcedure.query(() => getRecentActivity()),
-  importHistory: publicProcedure.query(() => getImportHistory()),
-  approvalQueue: publicProcedure.query(() => getApprovalQueue()),
-  list: publicProcedure.input(z.object({
+  dashboard: protectedProcedure.query(() => getDashboardData()),
+  catalog: protectedProcedure.query(() => getCatalog()),
+  notifications: protectedProcedure.query(() => getNotificationSummary()),
+  activity: protectedProcedure.query(() => getRecentActivity()),
+  importHistory: protectedProcedure.query(() => getImportHistory()),
+  approvalQueue: protectedProcedure.query(() => getApprovalQueue()),
+  list: protectedProcedure.input(z.object({
     search: z.string().optional(),
     status: z.string().optional(),
     category: z.string().optional(),
@@ -142,11 +143,11 @@ export const assetRouter = router({
     page: z.number().int().min(1).default(1),
     pageSize: z.number().int().min(1).max(100).default(10),
   })).query(({ input }) => listAssets(input)),
-  byId: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(({ input }) => getAssetById(input.id)),
-  addDocument: publicProcedure.input(z.object({ assetId: z.number().int().positive(), fileName: z.string().trim().min(1).max(220), fileUrl: z.string().url(), mimeType: z.string().max(120).optional(), sizeBytes: z.number().int().nonnegative().optional() })).mutation(async ({ input }) => { const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." }); await db.insert(assetDocuments).values({ assetId: input.assetId, fileName: input.fileName, fileUrl: input.fileUrl, mimeType: input.mimeType, sizeBytes: input.sizeBytes }); await db.insert(assetEvents).values({ assetId: input.assetId, eventType: "document_added", title: "Document attached", description: `${input.fileName} was added to the asset record.`, actorName: "Workspace operator", occurredAt: new Date() }); await createAuditLog({ assetId: input.assetId, action: "document_added", entityType: "asset_document", actorName: "Workspace operator", afterData: { fileName: input.fileName, fileUrl: input.fileUrl } }); return getAssetById(input.assetId); }),
+  byId: protectedProcedure.input(z.object({ id: z.number().int().positive() })).query(({ input }) => getAssetById(input.id)),
+  addDocument: protectedProcedure.input(z.object({ assetId: z.number().int().positive(), fileName: z.string().trim().min(1).max(220), fileUrl: z.string().url(), mimeType: z.string().max(120).optional(), sizeBytes: z.number().int().nonnegative().optional() })).mutation(async ({ input }) => { const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." }); await db.insert(assetDocuments).values({ assetId: input.assetId, fileName: input.fileName, fileUrl: input.fileUrl, mimeType: input.mimeType, sizeBytes: input.sizeBytes }); await db.insert(assetEvents).values({ assetId: input.assetId, eventType: "document_added", title: "Document attached", description: `${input.fileName} was added to the asset record.`, actorName: "Workspace operator", occurredAt: new Date() }); await createAuditLog({ assetId: input.assetId, action: "document_added", entityType: "asset_document", actorName: "Workspace operator", afterData: { fileName: input.fileName, fileUrl: input.fileUrl } }); return getAssetById(input.assetId); }),
   publicByToken: publicProcedure.input(z.object({ token: z.string().trim().min(8).max(96) })).query(({ input }) => getAssetByToken(input.token)),
-  qrSheet: publicProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100) })).query(async ({ input }) => { const details = await Promise.all(input.ids.map(id => getAssetById(id))); return details.filter((detail): detail is NonNullable<typeof detail> => Boolean(detail)).map(detail => ({ asset: detail.asset, qr: detail.qr })); }),
-  create: publicProcedure.input(assetInput).mutation(async ({ input, ctx }) => {
+  qrSheet: protectedProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100) })).query(async ({ input }) => { const details = await Promise.all(input.ids.map(id => getAssetById(id))); return details.filter((detail): detail is NonNullable<typeof detail> => Boolean(detail)).map(detail => ({ asset: detail.asset, qr: detail.qr })); }),
+  create: protectedProcedure.input(assetInput).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const assetId = asOptional(input.assetId) ?? await createAssetId();
@@ -201,7 +202,7 @@ export const assetRouter = router({
       throw new TRPCError({ code: "CONFLICT", message });
     }
   }),
-  update: publicProcedure.input(z.object({ id: z.number().int().positive(), changes: assetInput.partial() })).mutation(async ({ input }) => {
+  update: protectedProcedure.input(z.object({ id: z.number().int().positive(), changes: assetInput.partial() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const detail = await findAssetOrThrow(input.id);
@@ -221,7 +222,19 @@ export const assetRouter = router({
     await createAuditLog({ assetId: input.id, action: "update", entityType: "asset", entityId: input.id, beforeData: detail.asset, afterData: patch });
     return getAssetById(input.id);
   }),
-  checkout: publicProcedure.input(z.object({ id: z.number().int().positive(), employeeName: z.string().trim().min(2).max(160), employeeCode: z.string().trim().max(80).optional(), departmentName: z.string().trim().max(120).optional(), locationName: z.string().trim().max(160).optional(), purpose: z.string().trim().max(220).optional(), expectedReturnDate: z.string().optional(), condition: conditionSchema.default("good"), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
+  publicCheckout: publicProcedure.input(z.object({ token: z.string().trim().min(8).max(96), employeeName: z.string().trim().min(2).max(160), employeeCode: z.string().trim().max(80).optional(), departmentName: z.string().trim().max(120).optional(), locationName: z.string().trim().max(160).optional(), purpose: z.string().trim().max(220).optional(), expectedReturnDate: z.string().optional(), condition: conditionSchema.default("good"), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
+    const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
+    const publicRecord = await getAssetByToken(input.token); if (!publicRecord) throw new TRPCError({ code: "NOT_FOUND", message: "QR identity is invalid or inactive." });
+    const asset = publicRecord.asset; if (["retired", "disposed", "lost", "under_maintenance"].includes(asset.status)) throw new TRPCError({ code: "BAD_REQUEST", message: "This asset is not available for checkout in its current state." });
+    const now = new Date(); const expectedReturnDate = input.expectedReturnDate ? new Date(input.expectedReturnDate) : undefined;
+    await db.insert(assetAssignments).values({ assetId: asset.id, employeeName: input.employeeName, employeeCode: asOptional(input.employeeCode), departmentName: asOptional(input.departmentName), locationName: asOptional(input.locationName), purpose: asOptional(input.purpose), expectedReturnDate, checkedOutAt: now, notes: asOptional(input.notes) });
+    await db.insert(assetTransactions).values({ assetId: asset.id, type: "checkout", actorName: input.employeeName, fromLocation: asset.locationName, toLocation: input.locationName, toEmployee: input.employeeName, condition: input.condition, purpose: asOptional(input.purpose), notes: asOptional(input.notes), occurredAt: now });
+    await db.update(assets).set({ status: "checked_out", assignedEmployeeName: input.employeeName, assignedEmployeeCode: asOptional(input.employeeCode), assignedAt: now, expectedReturnDate, lastCheckoutAt: now, lastActivityAt: now, locationName: asOptional(input.locationName) ?? asset.locationName, departmentName: asOptional(input.departmentName) ?? asset.departmentName, condition: input.condition }).where(eq(assets.id, asset.id));
+    await db.insert(assetEvents).values({ assetId: asset.id, eventType: "checkout", title: "Asset checked out", description: `${asset.assetId} was checked out to ${input.employeeName}.`, actorName: input.employeeName, occurredAt: now });
+    await createAuditLog({ assetId: asset.id, action: "public_checkout", entityType: "asset_transaction", entityId: asset.id, beforeData: asset, afterData: { status: "checked_out", employeeName: input.employeeName }, reason: input.purpose, actorName: input.employeeName });
+    return getAssetById(asset.id);
+  }),
+  checkout: protectedProcedure.input(z.object({ id: z.number().int().positive(), employeeName: z.string().trim().min(2).max(160), employeeCode: z.string().trim().max(80).optional(), departmentName: z.string().trim().max(120).optional(), locationName: z.string().trim().max(160).optional(), purpose: z.string().trim().max(220).optional(), expectedReturnDate: z.string().optional(), condition: conditionSchema.default("good"), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const detail = await findAssetOrThrow(input.id);
@@ -235,7 +248,7 @@ export const assetRouter = router({
     await createAuditLog({ assetId: input.id, action: "checkout", entityType: "asset_transaction", entityId: input.id, beforeData: detail.asset, afterData: { status: "checked_out", employeeName: input.employeeName }, reason: input.purpose });
     return getAssetById(input.id);
   }),
-  checkin: publicProcedure.input(z.object({ id: z.number().int().positive(), condition: conditionSchema, damageDescription: z.string().max(2000).optional(), locationName: z.string().trim().max(160).optional(), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
+  checkin: protectedProcedure.input(z.object({ id: z.number().int().positive(), condition: conditionSchema, damageDescription: z.string().max(2000).optional(), locationName: z.string().trim().max(160).optional(), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const detail = await findAssetOrThrow(input.id);
@@ -248,7 +261,7 @@ export const assetRouter = router({
     await createAuditLog({ assetId: input.id, action: "checkin", entityType: "asset_transaction", entityId: input.id, beforeData: detail.asset, afterData: { status: nextStatus, condition: input.condition }, reason: input.damageDescription });
     return getAssetById(input.id);
   }),
-  transfer: publicProcedure.input(z.object({ id: z.number().int().positive(), employeeName: z.string().trim().min(2).max(160).optional(), employeeCode: z.string().trim().max(80).optional(), departmentName: z.string().trim().max(120).optional(), locationName: z.string().trim().max(160).optional(), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
+  transfer: protectedProcedure.input(z.object({ id: z.number().int().positive(), employeeName: z.string().trim().min(2).max(160).optional(), employeeCode: z.string().trim().max(80).optional(), departmentName: z.string().trim().max(120).optional(), locationName: z.string().trim().max(160).optional(), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const detail = await findAssetOrThrow(input.id);
@@ -262,7 +275,18 @@ export const assetRouter = router({
     await createAuditLog({ assetId: input.id, action: "transfer", entityType: "asset_transaction", entityId: input.id, beforeData: detail.asset, afterData: { employee, location }, reason: input.notes });
     return getAssetById(input.id);
   }),
-  reportDamage: publicProcedure.input(z.object({ id: z.number().int().positive(), severity: z.enum(["damaged", "critical"]), description: z.string().trim().min(5).max(3000), reportedBy: z.string().trim().min(2).max(160) })).mutation(async ({ input }) => {
+  publicReportDamage: publicProcedure.input(z.object({ token: z.string().trim().min(8).max(96), severity: z.enum(["damaged", "critical"]), description: z.string().trim().min(5).max(3000), reportedBy: z.string().trim().min(2).max(160) })).mutation(async ({ input }) => {
+    const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
+    const publicRecord = await getAssetByToken(input.token); if (!publicRecord) throw new TRPCError({ code: "NOT_FOUND", message: "QR identity is invalid or inactive." });
+    const asset = publicRecord.asset; const now = new Date();
+    await db.insert(assetTransactions).values({ assetId: asset.id, type: "damage", actorName: input.reportedBy, condition: input.severity, damageDescription: input.description, occurredAt: now });
+    await db.update(assets).set({ status: "damaged", condition: input.severity, lastActivityAt: now }).where(eq(assets.id, asset.id));
+    await db.insert(assetEvents).values({ assetId: asset.id, eventType: "damage", title: "Damage reported", description: input.description, actorName: input.reportedBy, occurredAt: now });
+    await db.insert(notificationEvents).values({ type: "system", title: "Damage report requires review", message: `${asset.assetId} was reported ${input.severity}.`, assetId: asset.id, severity: input.severity === "critical" ? "critical" : "warning" });
+    await createAuditLog({ assetId: asset.id, action: "public_damage_report", entityType: "asset_transaction", entityId: asset.id, beforeData: asset, afterData: { condition: input.severity }, reason: input.description, actorName: input.reportedBy });
+    return getAssetById(asset.id);
+  }),
+  reportDamage: protectedProcedure.input(z.object({ id: z.number().int().positive(), severity: z.enum(["damaged", "critical"]), description: z.string().trim().min(5).max(3000), reportedBy: z.string().trim().min(2).max(160) })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const detail = await findAssetOrThrow(input.id);
@@ -274,7 +298,7 @@ export const assetRouter = router({
     await createAuditLog({ assetId: input.id, action: "damage_report", entityType: "asset_transaction", entityId: input.id, beforeData: detail.asset, afterData: { condition: input.severity }, reason: input.description, actorName: input.reportedBy });
     return getAssetById(input.id);
   }),
-  setLifecycle: publicProcedure.input(z.object({ id: z.number().int().positive(), action: z.enum(["retire", "dispose", "maintenance_start", "maintenance_end"]), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
+  setLifecycle: protectedProcedure.input(z.object({ id: z.number().int().positive(), action: z.enum(["retire", "dispose", "maintenance_start", "maintenance_end"]), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const detail = await findAssetOrThrow(input.id);
@@ -286,7 +310,7 @@ export const assetRouter = router({
     await createAuditLog({ assetId: input.id, action: input.action, entityType: "asset_transaction", entityId: input.id, beforeData: detail.asset, afterData: { status }, reason: input.notes });
     return getAssetById(input.id);
   }),
-  createMaintenance: publicProcedure.input(z.object({ assetId: z.number().int().positive(), title: z.string().trim().min(2).max(220), provider: z.string().trim().max(180).optional(), dueDate: z.string().optional(), cost: z.union([z.number(), z.string()]).optional(), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
+  createMaintenance: protectedProcedure.input(z.object({ assetId: z.number().int().positive(), title: z.string().trim().min(2).max(220), provider: z.string().trim().max(180).optional(), dueDate: z.string().optional(), cost: z.union([z.number(), z.string()]).optional(), notes: z.string().max(2000).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     await findAssetOrThrow(input.assetId);
@@ -298,13 +322,13 @@ export const assetRouter = router({
     await db.insert(assetEvents).values({ assetId: input.assetId, eventType: "maintenance", title: "Maintenance scheduled", description: input.title, actorName: "Workspace operator", occurredAt: now });
     return getAssetById(input.assetId);
   }),
-  markNotificationRead: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input }) => {
+  markNotificationRead: protectedProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) return { success: false };
     await db.update(notificationEvents).set({ isRead: 1 }).where(eq(notificationEvents.id, input.id));
     return { success: true };
   }),
-  saveCatalogItem: publicProcedure.input(z.object({ kind: z.enum(["category", "department", "location"]), name: z.string().trim().min(2).max(160), code: z.string().trim().max(32).optional(), subcategory: z.string().trim().max(120).optional() })).mutation(async ({ input }) => {
+  saveCatalogItem: adminProcedure.input(z.object({ kind: z.enum(["category", "department", "location"]), name: z.string().trim().min(2).max(160), code: z.string().trim().max(32).optional(), subcategory: z.string().trim().max(120).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     if (input.kind === "category") await db.insert(assetCategories).values({ name: input.name, subcategory: asOptional(input.subcategory) });
@@ -312,9 +336,10 @@ export const assetRouter = router({
     if (input.kind === "location") await db.insert(locations).values({ name: input.name });
     return getCatalog();
   }),
-  exportCsv: publicProcedure.input(z.object({ ids: z.array(z.number().int().positive()).max(10000).optional(), search: z.string().trim().max(200).optional(), status: z.string().optional(), category: z.string().optional(), department: z.string().optional(), location: z.string().optional() })).query(async ({ input }) => { const rows = await exportAssets(input); const selected = input.ids?.length ? rows.filter(row => input.ids!.includes(row.id)) : rows; const csv = ["Asset ID,Asset Name,Category,Location,Status,Condition,Serial Number", ...selected.map(row => [row.assetId, row.name, row.categoryName, row.locationName, row.status, row.condition, row.serialNumber].map(csvEscape).join(","))].join("\n"); return { csv, count: selected.length }; }),
-  bulkUpdate: publicProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100), status: z.enum(["available", "assigned", "checked_out", "under_maintenance", "lost", "damaged", "retired", "disposed"]).optional(), locationName: z.string().trim().max(160).optional(), categoryName: z.string().trim().max(120).optional(), confirm: z.literal(true) })).mutation(async ({ input }) => { const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." }); const now = new Date(); for (const id of input.ids) { const before = await findAssetOrThrow(id); await db.update(assets).set({ status: input.status, locationName: input.locationName || before.asset.locationName, categoryName: input.categoryName || before.asset.categoryName, lastActivityAt: now }).where(eq(assets.id, id)); await db.insert(assetEvents).values({ assetId: id, eventType: "bulk_update", title: "Asset updated in bulk", description: "Status, location, or category was updated from bulk operations.", actorName: "Workspace operator", occurredAt: now }); await createAuditLog({ assetId: id, action: "bulk_update", entityType: "asset", entityId: id, beforeData: before.asset, afterData: { status: input.status, locationName: input.locationName, categoryName: input.categoryName } }); } return { updated: input.ids.length }; }),
-  importCsv: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(220), csv: z.string().min(1).max(2_000_000) })).mutation(async ({ input, ctx }) => {
+  exportCsv: protectedProcedure.input(z.object({ ids: z.array(z.number().int().positive()).max(10000).optional(), search: z.string().trim().max(200).optional(), status: z.string().optional(), category: z.string().optional(), department: z.string().optional(), location: z.string().optional() })).query(async ({ input }) => { const rows = await exportAssets(input); const selected = input.ids?.length ? rows.filter(row => input.ids!.includes(row.id)) : rows; const csv = ["Asset ID,Asset Name,Category,Location,Status,Condition,Serial Number", ...selected.map(row => [row.assetId, row.name, row.categoryName, row.locationName, row.status, row.condition, row.serialNumber].map(csvEscape).join(","))].join("\n"); return { csv, count: selected.length }; }),
+  movementReport: protectedProcedure.input(z.object({ status: z.string().optional(), category: z.string().optional() }).optional()).query(({ input }) => getCurrentMovementReport(input ?? {})),
+  bulkUpdate: protectedProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100), status: z.enum(["available", "assigned", "checked_out", "under_maintenance", "lost", "damaged", "retired", "disposed"]).optional(), locationName: z.string().trim().max(160).optional(), categoryName: z.string().trim().max(120).optional(), confirm: z.literal(true) })).mutation(async ({ input }) => { const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." }); const now = new Date(); for (const id of input.ids) { const before = await findAssetOrThrow(id); await db.update(assets).set({ status: input.status, locationName: input.locationName || before.asset.locationName, categoryName: input.categoryName || before.asset.categoryName, lastActivityAt: now }).where(eq(assets.id, id)); await db.insert(assetEvents).values({ assetId: id, eventType: "bulk_update", title: "Asset updated in bulk", description: "Status, location, or category was updated from bulk operations.", actorName: "Workspace operator", occurredAt: now }); await createAuditLog({ assetId: id, action: "bulk_update", entityType: "asset", entityId: id, beforeData: before.asset, afterData: { status: input.status, locationName: input.locationName, categoryName: input.categoryName } }); } return { updated: input.ids.length }; }),
+  importCsv: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(220), csv: z.string().min(1).max(2_000_000) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const rows = parseCsv(input.csv);
@@ -359,13 +384,13 @@ export const assetRouter = router({
     await db.update(importJobs).set({ successfulRows, failedRows: errors.length, errorCount: errors.length, status: successfulRows ? "completed" : "failed" }).where(eq(importJobs.id, jobId));
     return { jobId, totalRows: dataRows.length, successfulRows, failedRows: errors.length, errors };
   }),
-  saveSetting: publicProcedure.input(z.object({ key: z.string().trim().min(2).max(120), value: z.string().max(2000), description: z.string().max(500).optional() })).mutation(async ({ input }) => {
+  saveSetting: adminProcedure.input(z.object({ key: z.string().trim().min(2).max(120), value: z.string().max(2000), description: z.string().max(500).optional() })).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     await db.insert(appSettings).values(input).onDuplicateKeyUpdate({ set: { value: input.value, description: input.description } });
     return getCatalog();
   }),
-  seedDemo: publicProcedure.mutation(async ({ ctx }) => {
+  seedDemo: adminProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
     const existing = await db.select({ id: assets.id }).from(assets).where(eq(assets.isDemo, 1)).limit(1);

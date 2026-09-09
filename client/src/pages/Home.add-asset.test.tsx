@@ -28,7 +28,7 @@ vi.mock("@/components/ui/button", () => ({ Button: ({ children, ...props }: any)
 vi.mock("recharts", () => {
   const Box = ({ children }: any) => <div>{children}</div>;
   const Empty = () => null;
-  return { Area: Empty, AreaChart: Box, Bar: Empty, BarChart: Box, CartesianGrid: Empty, Cell: Empty, Pie: Empty, PieChart: Box, ResponsiveContainer: Box, Tooltip: Empty, XAxis: Empty, YAxis: Empty };
+  return { Bar: Empty, BarChart: Box, CartesianGrid: Empty, Cell: Empty, Line: Empty, LineChart: Box, Pie: Empty, PieChart: Box, ResponsiveContainer: Box, Tooltip: Empty, XAxis: Empty, YAxis: Empty };
 });
 
 import Home from "./Home";

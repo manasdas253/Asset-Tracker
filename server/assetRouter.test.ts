@@ -5,7 +5,17 @@ import type { TrpcContext } from "./_core/context";
 
 function createContext(): TrpcContext {
   return {
-    user: null,
+    user: {
+      id: 1,
+      openId: "google:test-user",
+      name: "Test User",
+      email: "test@example.com",
+      loginMethod: "google",
+      role: "user",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastSignedIn: new Date(),
+    },
     req: { protocol: "https", headers: {}, get: () => "assettrack.test" } as TrpcContext["req"],
     res: {} as TrpcContext["res"],
   };

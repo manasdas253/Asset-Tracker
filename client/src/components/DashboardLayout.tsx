@@ -21,6 +21,7 @@ import {
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 const primaryNav = [
   { label: "Overview", path: "/", icon: LayoutDashboard },
@@ -98,8 +99,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
         <main className="min-h-[calc(100vh-72px)] px-5 py-6 sm:px-8 sm:py-8">{children}</main>
       </div>
+      <LogoutControl />
     </div>
   );
+}
+
+function LogoutControl() {
+  const { user, logout } = useAuth();
+  if (!user) return null;
+  return <button type="button" onClick={() => void logout()} className="fixed bottom-4 right-4 z-40 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm hover:text-[#c5161d]">Sign out</button>;
 }
 
 function NavItem({ item, active, onNavigate }: { item: (typeof primaryNav)[number]; active: boolean; onNavigate: () => void }) {

@@ -89,4 +89,20 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function upsertGoogleUser(input: { openId: string; email: string; name: string; role: "user" | "admin" }) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.insert(users).values({
+    openId: input.openId,
+    email: input.email,
+    name: input.name,
+    loginMethod: "google",
+    role: input.role,
+    lastSignedIn: new Date(),
+  }).onDuplicateKeyUpdate({
+    set: { email: input.email, name: input.name, loginMethod: "google", role: input.role, lastSignedIn: new Date() },
+  });
+  return getUserByOpenId(input.openId);
+}
+
 // TODO: add feature queries here as your schema grows.

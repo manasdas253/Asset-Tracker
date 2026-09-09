@@ -140,6 +140,63 @@ export async function exportAssets(input: { search?: string; status?: string; ca
   return result.rows;
 }
 
+/**
+ * A read-only snapshot for the Movement Report.  The asset row is the source
+ * of truth for the current state; transactions are used only to identify the
+ * latest recorded movement, never to replay or substitute the current state.
+ */
+export async function getCurrentMovementReport(input: { status?: string; category?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const filters = [];
+  if (input.status && input.status !== "all") filters.push(eq(assets.status, input.status as typeof assets.status.enumValues[number]));
+  if (input.category && input.category !== "all") filters.push(eq(assets.categoryName, input.category));
+  const where = filters.length ? and(...filters) : undefined;
+
+  const [currentAssets, transactions] = await Promise.all([
+    db.select().from(assets).where(where).orderBy(asc(assets.assetId)),
+    db.select().from(assetTransactions).orderBy(desc(assetTransactions.occurredAt), desc(assetTransactions.id)),
+  ]);
+  const latestTransactionByAsset = new Map<number, typeof transactions[number]>();
+  for (const transaction of transactions) {
+    if (!latestTransactionByAsset.has(transaction.assetId)) latestTransactionByAsset.set(transaction.assetId, transaction);
+  }
+
+  return currentAssets.map(asset => {
+    const latestMovement = latestTransactionByAsset.get(asset.id);
+    const isCheckedOut = asset.status === "checked_out";
+    return {
+      assetId: asset.assetId,
+      assetName: asset.name,
+      category: asset.categoryName,
+      subcategory: asset.subcategory,
+      assetType: asset.assetType,
+      currentStatus: asset.status,
+      currentLocation: asset.locationName,
+      building: asset.building,
+      floor: asset.floor,
+      storageLocation: asset.storageLocation,
+      currentAssignee: asset.assignedEmployeeName,
+      assigneeCode: asset.assignedEmployeeCode,
+      department: asset.departmentName,
+      availability: asset.status === "available" ? "Available" : "Unavailable",
+      checkoutStatus: isCheckedOut ? "Checked out" : "Not checked out",
+      serialNumber: asset.serialNumber,
+      manufacturer: asset.manufacturer,
+      brand: asset.brand,
+      model: asset.model,
+      modelNumber: asset.modelNumber,
+      sku: asset.sku,
+      barcodeNumber: asset.barcodeNumber,
+      condition: asset.condition,
+      lastMovementDate: latestMovement?.occurredAt ?? asset.assignedAt ?? asset.lastCheckoutAt ?? asset.lastCheckinAt ?? null,
+      lastMovementType: latestMovement?.type,
+      lastUpdatedDate: asset.updatedAt,
+    };
+  });
+}
+
 export async function getAssetById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
