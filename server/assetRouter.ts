@@ -107,6 +107,30 @@ async function findAssetOrThrow(id: number) {
   return detail;
 }
 
+async function createAssetRecord(input: z.infer<typeof assetInput>, req: Parameters<typeof getPublicBaseUrl>[0], source = "Workspace operator") {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
+  const assetId = asOptional(input.assetId) ?? await createAssetId();
+  const dates = parseAssetDates(input);
+  const cost = safeNumber(input.purchaseCost);
+  const now = new Date();
+  const values = {
+    assetId, name: input.name, categoryName: asOptional(input.categoryName), subcategory: asOptional(input.subcategory), assetType: asOptional(input.assetType),
+    description: asOptional(input.description), serialNumber: asOptional(input.serialNumber), manufacturer: asOptional(input.manufacturer), brand: asOptional(input.brand), model: asOptional(input.model),
+    modelNumber: asOptional(input.modelNumber), sku: asOptional(input.sku), barcodeNumber: asOptional(input.barcodeNumber), purchaseDate: dates.purchaseDate, purchaseCost: cost?.toFixed(2),
+    currency: input.currency ?? "USD", vendor: asOptional(input.vendor), invoiceNumber: asOptional(input.invoiceNumber), purchaseOrderNumber: asOptional(input.purchaseOrderNumber),
+    warrantyProvider: asOptional(input.warrantyProvider), warrantyStartDate: dates.warrantyStartDate, warrantyExpiryDate: dates.warrantyExpiryDate, warrantyTerms: asOptional(input.warrantyTerms),
+    departmentName: asOptional(input.departmentName), locationName: asOptional(input.locationName), building: asOptional(input.building), floor: asOptional(input.floor), storageLocation: asOptional(input.storageLocation),
+    condition: input.condition ?? "good", status: input.status ?? "available", notes: asOptional(input.notes), imageUrl: asOptional(input.imageUrl), isDemo: input.isDemo ? 1 : 0, lastActivityAt: now,
+  };
+  const result = await db.insert(assets).values(values);
+  const id = Number(result[0].insertId);
+  const qr = await createQr(db, id, req);
+  await db.insert(assetEvents).values({ assetId: id, eventType: "created", title: source === "Workspace operator" ? "Asset registered" : "Asset imported", description: `${assetId} was added to the asset register.`, actorName: source, occurredAt: now });
+  await createAuditLog({ assetId: id, action: source === "Workspace operator" ? "create" : "import", entityType: "asset", entityId: id, afterData: { ...values, qrToken: qr.token }, actorName: source });
+  return { id, assetId, qr };
+}
+
 function csvEscape(value: unknown) { const text = value == null ? "" : String(value); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
 
 function parseCsv(csv: string) {
@@ -148,59 +172,54 @@ export const assetRouter = router({
   publicByToken: publicProcedure.input(z.object({ token: z.string().trim().min(8).max(96) })).query(({ input }) => getAssetByToken(input.token)),
   qrSheet: protectedProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100) })).query(async ({ input }) => { const details = await Promise.all(input.ids.map(id => getAssetById(id))); return details.filter((detail): detail is NonNullable<typeof detail> => Boolean(detail)).map(detail => ({ asset: detail.asset, qr: detail.qr })); }),
   create: protectedProcedure.input(assetInput).mutation(async ({ input, ctx }) => {
-    const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
-    const assetId = asOptional(input.assetId) ?? await createAssetId();
-    const dates = parseAssetDates(input);
-    const cost = safeNumber(input.purchaseCost);
-    const now = new Date();
-    const values = {
-      assetId,
-      name: input.name,
-      categoryName: asOptional(input.categoryName),
-      subcategory: asOptional(input.subcategory),
-      assetType: asOptional(input.assetType),
-      description: asOptional(input.description),
-      serialNumber: asOptional(input.serialNumber),
-      manufacturer: asOptional(input.manufacturer),
-      brand: asOptional(input.brand),
-      model: asOptional(input.model),
-      modelNumber: asOptional(input.modelNumber),
-      sku: asOptional(input.sku),
-      barcodeNumber: asOptional(input.barcodeNumber),
-      purchaseDate: dates.purchaseDate,
-      purchaseCost: cost?.toFixed(2),
-      currency: input.currency ?? "USD",
-      vendor: asOptional(input.vendor),
-      invoiceNumber: asOptional(input.invoiceNumber),
-      purchaseOrderNumber: asOptional(input.purchaseOrderNumber),
-      warrantyProvider: asOptional(input.warrantyProvider),
-      warrantyStartDate: dates.warrantyStartDate,
-      warrantyExpiryDate: dates.warrantyExpiryDate,
-      warrantyTerms: asOptional(input.warrantyTerms),
-      departmentName: asOptional(input.departmentName),
-      locationName: asOptional(input.locationName),
-      building: asOptional(input.building),
-      floor: asOptional(input.floor),
-      storageLocation: asOptional(input.storageLocation),
-      condition: input.condition ?? "good",
-      status: input.status ?? "available",
-      notes: asOptional(input.notes),
-      imageUrl: asOptional(input.imageUrl),
-      isDemo: input.isDemo ? 1 : 0,
-      lastActivityAt: now,
-    };
     try {
-      const result = await db.insert(assets).values(values);
-      const newId = Number(result[0].insertId);
-      const qr = await createQr(db, newId, ctx.req);
-      await db.insert(assetEvents).values({ assetId: newId, eventType: "created", title: "Asset registered", description: `${assetId} was added to the asset register.`, actorName: "Workspace operator", occurredAt: now });
-      await createAuditLog({ assetId: newId, action: "create", entityType: "asset", entityId: newId, afterData: { ...values, qrToken: qr.token } });
-      return { id: newId, assetId, qr };
+      return await createAssetRecord(input, ctx.req);
     } catch (error) {
       const message = error instanceof Error && error.message.includes("Duplicate") ? "Asset ID or serial number already exists." : "Could not save the asset. Please review the fields and try again.";
       throw new TRPCError({ code: "CONFLICT", message });
     }
+  }),
+  bulkValidate: protectedProcedure.input(z.object({ rows: z.array(z.unknown()).min(1).max(500) })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
+    const [assetRows, serialRows] = await Promise.all([db.select({ assetId: assets.assetId }).from(assets), db.select({ serialNumber: assets.serialNumber }).from(assets)]);
+    const knownIds = new Set(assetRows.map(row => row.assetId.toLowerCase()));
+    const knownSerials = new Set(serialRows.map(row => row.serialNumber?.toLowerCase()).filter(Boolean) as string[]);
+    const seenIds = new Set<string>();
+    const seenSerials = new Set<string>();
+    return input.rows.map((row, index) => {
+      const parsed = assetInput.safeParse(row);
+      const errors: string[] = [];
+      if (!parsed.success) errors.push(...parsed.error.issues.map(issue => `${String(issue.path[0] ?? "Row")}: ${issue.message}`));
+      if (parsed.success) {
+        const costValue = parsed.data.purchaseCost;
+        if (costValue !== undefined && (safeNumber(costValue) === undefined || safeNumber(costValue)! < 0)) errors.push("Purchase cost must be a non-negative number.");
+        for (const [field, label] of [[parsed.data.purchaseDate, "Purchase date"], [parsed.data.warrantyExpiryDate, "Warranty expiry"]] as const) {
+          if (field && (!/^\d{4}-\d{2}-\d{2}$/.test(field) || Number.isNaN(Date.parse(`${field}T00:00:00`)))) errors.push(`${label} must use a valid YYYY-MM-DD date.`);
+        }
+        const id = parsed.data.assetId?.trim().toLowerCase();
+        const serial = parsed.data.serialNumber?.trim().toLowerCase();
+        if (id && (knownIds.has(id) || seenIds.has(id))) errors.push("Asset ID is duplicated.");
+        if (serial && (knownSerials.has(serial) || seenSerials.has(serial))) errors.push("Serial number is duplicated.");
+        if (id) seenIds.add(id);
+        if (serial) seenSerials.add(serial);
+      }
+      return { rowNumber: index + 2, valid: errors.length === 0, errors };
+    });
+  }),
+  bulkCreate: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(220), rows: z.array(z.object({ row: assetInput, rowNumber: z.number().int().positive() })).min(1).max(500) })).mutation(async ({ input, ctx }) => {
+    const failures: { rowNumber: number; message: string }[] = [];
+    let successfulRows = 0;
+    for (let index = 0; index < input.rows.length; index += 1) {
+      const { row, rowNumber } = input.rows[index];
+      try {
+        await createAssetRecord(row, ctx.req, "Bulk upload");
+        successfulRows += 1;
+      } catch (error) {
+        failures.push({ rowNumber, message: error instanceof Error ? error.message : "Could not create this asset row." });
+      }
+    }
+    return { totalRows: input.rows.length, successfulRows, failedRows: failures.length, failures };
   }),
   update: protectedProcedure.input(z.object({ id: z.number().int().positive(), changes: assetInput.partial() })).mutation(async ({ input }) => {
     const db = await getDb();
