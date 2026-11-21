@@ -1,20 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import { parseAssetDates, safeNumber } from "./assetDb";
 import type { TrpcContext } from "./_core/context";
+
+vi.mock("./db", () => ({ getDb: async () => ({
+  select: () => ({ from: () => {
+    const chain: any = { where: () => chain, orderBy: () => chain, limit: () => chain, offset: () => chain, then: (resolve: any) => Promise.resolve([]).then(resolve) };
+    return chain;
+  } }),
+  insert: () => ({ values: async () => [{ insertId: 1 }] }),
+}) }));
 
 function createContext(): TrpcContext {
   return {
     user: {
       id: 1,
-      openId: "google:test-user",
+      employeeId: "ADMIN001",
+      employeeRecordId: null,
+      mustChangePassword: false,
       name: "Test User",
       email: "test@example.com",
-      loginMethod: "google",
-      role: "user",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      lastSignedIn: new Date(),
+      role: "admin",
     },
     req: { protocol: "https", headers: {}, get: () => "assettrack.test" } as TrpcContext["req"],
     res: {} as TrpcContext["res"],

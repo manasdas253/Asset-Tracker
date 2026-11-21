@@ -8,6 +8,11 @@ import DashboardLayout from "./DashboardLayout";
 
 const navigate = vi.fn();
 let currentLocation = "/";
+let currentRole = "admin";
+
+vi.mock("@/_core/hooks/useAuth", () => ({
+  useAuth: () => ({ user: { role: currentRole, name: "Test operator" }, logout: vi.fn() }),
+}));
 
 vi.mock("wouter", () => ({
   Link: ({ href, children, onClick, ...props }: any) => <a href={href} onClick={(event) => { onClick?.(event); if (!event.defaultPrevented) navigate(href); }} {...props}>{children}</a>,
@@ -22,9 +27,19 @@ afterEach(() => {
   cleanup();
   navigate.mockReset();
   currentLocation = "/";
+  currentRole = "admin";
 });
 
 describe("DashboardLayout sidebar accessibility", () => {
+  it("limits employee navigation to profile and scanner", () => {
+    currentRole = "employee";
+    render(<DashboardLayout><div>Employee content</div></DashboardLayout>);
+    expect(screen.getByRole("link", { name: "My profile" }).getAttribute("href")).toBe("/profile");
+    expect(screen.getByRole("link", { name: "Scan QR" }).getAttribute("href")).toBe("/scan");
+    for (const label of ["Overview", "Asset registry", "Add asset", "Reports", "Employee access"]) expect(screen.queryByRole("link", { name: label })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /Search assets/ })).toBeNull();
+  });
+
   it("exposes a visible focus contract for sidebar links", () => {
     render(<DashboardLayout><div>Page content</div></DashboardLayout>);
     const overview = screen.getByRole("link", { name: "Overview" });

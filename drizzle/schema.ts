@@ -22,6 +22,57 @@ export const users = mysqlTable("users", {
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
+// Local authentication is additive: legacy users and all asset/QR identities stay intact.
+export const authAccounts = mysqlTable("auth_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  loginId: varchar("loginId", { length: 80 }).notNull().unique(),
+  employeeRecordId: int("employeeRecordId").unique().references(() => employees.id),
+  name: varchar("name", { length: 160 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  role: mysqlEnum("role", ["admin", "employee"]).notNull().default("employee"),
+  passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  passwordVersion: int("passwordVersion").notNull().default(1),
+  mustChangePassword: int("mustChangePassword").notNull().default(1),
+  temporaryPasswordExpiresAt: timestamp("temporaryPasswordExpiresAt"),
+  isActive: int("isActive").notNull().default(1),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const authSessions = mysqlTable("auth_sessions", {
+  tokenHash: varchar("tokenHash", { length: 64 }).primaryKey(),
+  accountId: int("accountId").notNull().references(() => authAccounts.id),
+  passwordVersion: int("passwordVersion").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({ accountIdx: index("auth_sessions_account_idx").on(table.accountId), expiryIdx: index("auth_sessions_expiry_idx").on(table.expiresAt) }));
+
+export const employeeAssetPermissions = mysqlTable("employee_asset_permissions", {
+  id: int("id").autoincrement().primaryKey(),
+  accountId: int("accountId").notNull().references(() => authAccounts.id),
+  assetId: int("assetId").notNull().references(() => assets.id),
+  grantedBy: int("grantedBy").notNull().references(() => authAccounts.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({ grantIdx: uniqueIndex("employee_asset_permission_idx").on(table.accountId, table.assetId) }));
+
+export const securityAuditLogs = mysqlTable("security_audit_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  accountId: int("accountId"),
+  actor: varchar("actor", { length: 80 }),
+  action: varchar("action", { length: 80 }).notNull(),
+  outcome: mysqlEnum("outcome", ["success", "denied"]).notNull(),
+  assetId: int("assetId"),
+  ipAddress: varchar("ipAddress", { length: 64 }),
+  details: text("details"),
+  occurredAt: timestamp("occurredAt").defaultNow().notNull(),
+}, table => ({ timeIdx: index("security_audit_time_idx").on(table.occurredAt), accountIdx: index("security_audit_account_idx").on(table.accountId) }));
+
+export const authRateLimits = mysqlTable("auth_rate_limits", {
+  bucketKey: varchar("bucketKey", { length: 64 }).primaryKey(),
+  attempts: int("attempts").notNull(),
+  windowStart: timestamp("windowStart").notNull(),
+});
+
 export const assetCategories = mysqlTable("asset_categories", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 120 }).notNull(),
@@ -72,6 +123,7 @@ export const employees = mysqlTable("employees", {
 export const assets = mysqlTable("assets", {
   id: int("id").autoincrement().primaryKey(),
   assetId: varchar("assetId", { length: 80 }).notNull().unique(),
+  subAssetId: varchar("subAssetId", { length: 80 }),
   name: varchar("name", { length: 220 }).notNull(),
   categoryId: int("categoryId"),
   categoryName: varchar("categoryName", { length: 120 }),

@@ -3,7 +3,7 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerGoogleAuthRoutes } from "./googleAuth";
+import { requestSecurity } from "./requestSecurity";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -34,9 +34,9 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 0));
   registerStorageProxy(app);
-  app.set("trust proxy", 1);
-  registerGoogleAuthRoutes(app);
+  app.use("/api", requestSecurity);
   // tRPC API
   app.use(
     "/api/trpc",

@@ -1,8 +1,14 @@
 import type { Express } from "express";
 import { ENV } from "./env";
+import { authenticateRequest } from "./localAuth";
 
 export function registerStorageProxy(app: Express) {
   app.get("/manus-storage/*", async (req, res) => {
+    const user = await authenticateRequest(req).catch(() => null);
+    if (!user || user.mustChangePassword || user.role !== "admin") {
+      res.status(user ? 403 : 401).send("Document access denied.");
+      return;
+    }
     const key = (req.params as Record<string, string>)[0];
     if (!key) {
       res.status(400).send("Missing storage key");

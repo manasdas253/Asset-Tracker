@@ -5,6 +5,10 @@ import type { TrpcContext } from "./context";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
+  errorFormatter({ shape, error }) {
+    // Database errors can include bound SQL parameters. Never send those to a browser.
+    return error.code === "INTERNAL_SERVER_ERROR" ? { ...shape, message: "The request could not be completed.", data: { ...shape.data, stack: undefined } } : shape;
+  },
 });
 
 export const router = t.router;
@@ -25,9 +29,14 @@ const requireUser = t.middleware(async opts => {
   });
 });
 
-export const protectedProcedure = t.procedure.use(requireUser);
+// A temporary-password session can only read its profile, change password, or log out.
+export const signedInProcedure = t.procedure.use(requireUser);
+export const protectedProcedure = signedInProcedure.use(async ({ ctx, next }) => {
+  if (ctx.user.mustChangePassword) throw new TRPCError({ code: "FORBIDDEN", message: "Change your temporary password before continuing." });
+  return next({ ctx });
+});
 
-export const adminProcedure = t.procedure.use(
+export const adminProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 

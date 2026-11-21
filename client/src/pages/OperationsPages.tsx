@@ -1,3 +1,4 @@
+import { PhysicalVerificationPanel } from "@/components/PhysicalVerificationPanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
@@ -29,6 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { AssetQrLabel, buildQrLabelDocument, printQrLabelDocument, qrLabelStyles, type LabelSize } from "@/lib/qrLabels";
 
 const inputClass =
   "h-10 rounded-xl border-slate-200 bg-white text-sm shadow-none focus:border-[#7dcac4] focus:ring-[#ccebe7]";
@@ -94,7 +96,7 @@ export function ScanPage() {
             if (value) {
               const token =
                 value.match(/\/asset\/([^/?#]+)/)?.[1] ?? value.trim();
-              window.location.assign(`/asset/${token}`);
+              window.location.assign(`/asset/${encodeURIComponent(token)}`);
               return;
             }
           } catch {
@@ -120,13 +122,13 @@ export function ScanPage() {
     event.preventDefault();
     const token =
       manual.trim().match(/\/asset\/([^/?#]+)/)?.[1] ?? manual.trim();
-    if (token) window.location.assign(`/asset/${token}`);
+    if (token) window.location.assign(`/asset/${encodeURIComponent(token)}`);
   };
   return (
     <ModuleShell
       eyebrow="Field tools"
       title="Scan an asset QR"
-      description="Use a phone camera to open the privacy-safe public asset page, or paste a QR token when camera access is unavailable."
+      description="Use a phone camera to open the authorized asset page, or paste a QR token when camera access is unavailable."
     >
       <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
         <Card className="overflow-hidden rounded-[22px] border-slate-200/80">
@@ -396,7 +398,7 @@ export function QrLabelsPage() {
       .filter(Number.isFinite)
   );
   const rows = assets.data?.rows ?? [];
-  const chosen = rows.filter(row => selected.includes(row.id));
+  const [labelSize, setLabelSize] = useState<LabelSize>("standard");
   const sheet = trpc.asset.qrSheet.useQuery(
     { ids: selected },
     { enabled: selected.length > 0 }
@@ -407,16 +409,16 @@ export function QrLabelsPage() {
         ? current.filter(value => value !== id)
         : [...current, id]
     );
+  const ready = selected.length > 0 && !sheet.isFetching && !sheet.isError && sheet.data?.length === selected.length && sheet.data.every(item => item.qr?.qrDataUrl);
+  const labelDocument = () => buildQrLabelDocument(sheet.data ?? [], labelSize, window.location.origin);
   const print = () => {
-    if (!chosen.length) return toast.error("Select at least one asset label");
-    window.print();
+    if (!ready) return toast.error("Wait for all selected QR labels to load");
+    void printQrLabelDocument(labelDocument());
   };
   const downloadSheet = () => {
-    if (!sheet.data?.length)
-      return toast.error("Select at least one asset label");
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>AssetTrack QR label sheet</title><style>body{font-family:Arial,sans-serif;margin:24px;color:#111418}h1{font-size:20px}.sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.label{border:1px solid #d9e5e7;border-radius:12px;padding:16px;text-align:center;break-inside:avoid}.label img{width:150px;height:150px;margin:14px auto;display:block}.id{font-family:monospace;color:#a50f16;font-weight:bold;font-size:12px}.name{font-weight:bold;font-size:14px}</style></head><body><h1>AssetTrack · QR label sheet</h1><p>Generated from the current asset register.</p><div class="sheet">${sheet.data.map(item => `<div class="label"><div class="id">${htmlEscape(item.asset.assetId)}</div><img src="${item.qr?.qrDataUrl ?? ""}" alt="QR code for ${htmlEscape(item.asset.assetId)}"><div class="name">${htmlEscape(item.asset.name)}</div>${item.asset.serialNumber ? `<div>${htmlEscape(item.asset.serialNumber)}</div>` : ""}</div>`).join("")}</div><script>window.onload=()=>window.print()</script></body></html>`;
-    download(html, "assettrack-qr-sheet.html", "text/html");
-    toast.success("Print-ready QR sheet downloaded");
+    if (!ready) return toast.error("Wait for all selected QR labels to load");
+    download(labelDocument(), `iims-${labelSize}-labels.html`, "text/html");
+    toast.success("Print-ready labels downloaded. Open the file and print at 100% scale.");
   };
   return (
     <ModuleShell
@@ -424,6 +426,15 @@ export function QrLabelsPage() {
       title="QR label studio"
       description="Select assets, preview branded labels, and print persistent QR identities for physical tagging."
     >
+      <style>{qrLabelStyles}</style>
+      <div className="flex flex-wrap items-center gap-3">
+        <Label htmlFor="label-size">Label size</Label>
+        <select id="label-size" className={`${inputClass} px-3`} value={labelSize} onChange={event => setLabelSize(event.target.value as LabelSize)}>
+          <option value="standard">Standard (60 x 40 mm)</option>
+          <option value="compact">Compact (35 x 35 mm)</option>
+        </select>
+        <p className="text-xs text-slate-500">Print at 100% scale with background graphics enabled.</p>
+      </div>
       <div className="flex flex-col justify-between gap-3 rounded-2xl border border-[#bde5e1] bg-[#fbf1f1] p-4 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <QrCode className="mt-0.5 h-5 w-5 text-[#c5161d]" />
@@ -450,6 +461,7 @@ export function QrLabelsPage() {
           </Button>
           <Button
             onClick={print}
+            disabled={!ready}
             className="rounded-xl bg-[#151a20] text-white hover:bg-[#7f0d12]"
           >
             <Printer className="mr-2 h-4 w-4" /> Print sheet
@@ -457,7 +469,7 @@ export function QrLabelsPage() {
           <Button
             variant="outline"
             onClick={downloadSheet}
-            disabled={sheet.isLoading}
+            disabled={!ready}
             className="rounded-xl border-[#e7bfc2] bg-white text-xs font-bold text-[#a50f16]"
           >
             <Download className="mr-2 h-4 w-4" />{" "}
@@ -521,67 +533,11 @@ export function QrLabelsPage() {
           )}
         </CardContent>
       </Card>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-3">
-        {chosen.map(row => (
-          <QrLabel key={row.id} asset={row} />
-        ))}
+      {sheet.isError && <p role="alert" className="text-sm text-red-700">Could not load labels. <Button variant="outline" onClick={() => sheet.refetch()}>Try again</Button></p>}
+      <div className="flex flex-wrap gap-4">
+        {sheet.data?.map(item => <div key={item.asset.id} className="max-w-full space-y-2 overflow-x-auto"><AssetQrLabel {...item} size={labelSize} />{item.qr?.qrDataUrl && <Button asChild variant="outline" className="rounded-xl"><a href={item.qr.qrDataUrl} download={`${item.asset.assetId}-qr.png`}>Download QR</a></Button>}</div>)}
       </div>
     </ModuleShell>
-  );
-}
-
-function QrLabel({ asset }: { asset: any }) {
-  const detail = trpc.asset.byId.useQuery({ id: asset.id });
-  const qr = detail.data?.qr;
-  const saveLabel = () => {
-    if (!qr?.qrDataUrl) return toast.error("QR image is still loading");
-    const anchor = document.createElement("a");
-    anchor.href = qr.qrDataUrl;
-    anchor.download = `${asset.assetId}-qr.png`;
-    anchor.click();
-    toast.success(`${asset.assetId} QR downloaded`);
-  };
-  return (
-    <div className="qr-print-label rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_20px_rgba(26,67,85,0.05)]">
-      <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#151a20] text-white">
-          <QrCode className="h-3.5 w-3.5" />
-        </div>
-        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#151a20]">
-          AssetTrack
-        </span>
-      </div>
-      {qr?.qrDataUrl ? (
-        <img
-          src={qr.qrDataUrl}
-          alt={`QR code for ${asset.assetId}`}
-          className="mx-auto my-4 h-36 w-36"
-        />
-      ) : (
-        <div className="mx-auto my-4 flex h-36 w-36 items-center justify-center bg-slate-50 text-[10px] text-slate-400">
-          Loading QR
-        </div>
-      )}
-      <p className="truncate text-center text-sm font-black text-slate-900">
-        {asset.name}
-      </p>
-      <p className="mt-1 text-center font-mono text-xs font-bold text-[#a50f16]">
-        {asset.assetId}
-      </p>
-      {asset.serialNumber && (
-        <p className="mt-1 truncate text-center text-[10px] text-slate-400">
-          S/N {asset.serialNumber}
-        </p>
-      )}
-      <Button
-        type="button"
-        variant="outline"
-        onClick={saveLabel}
-        className="mx-auto mt-3 flex h-8 rounded-lg border-[#e7bfc2] bg-white px-3 text-[11px] font-bold text-[#a50f16]"
-      >
-        Download QR
-      </Button>
-    </div>
   );
 }
 
@@ -801,17 +757,23 @@ export function ReportsPage() {
 
 export function AuditPage() {
   const activity = trpc.asset.activity.useQuery();
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityLimit, setActivityLimit] = useState(10);
+  const events = (activity.data ?? []).filter(item =>
+    `${item.event.title} ${item.event.description ?? ""} ${item.asset?.assetId ?? "GLOBAL"} ${item.event.eventType}`.toLowerCase().includes(activitySearch.toLowerCase())
+  );
   return (
     <ModuleShell
       eyebrow="Governance"
       title="Audit & verification"
-      description="Review the event trail that answers who handled an asset, what happened, where it was, and when it changed."
+      description="Verify assets, resolve exceptions, and keep every movement accountable."
     >
+      <PhysicalVerificationPanel />
       <Card className="rounded-[22px] border-slate-200/80">
         <CardHeader className="flex flex-row items-center justify-between px-6 pb-3 pt-6">
           <div>
             <CardTitle className="text-base font-black">
-              Activity integrity
+              Asset activity trail
             </CardTitle>
             <p className="mt-1 text-xs text-slate-400">
               Every event is written server-side and tied to an asset record.
@@ -821,11 +783,17 @@ export function AuditPage() {
             variant="outline"
             className="border-[#bde5e1] bg-[#fbf1f1] text-[#a50f16]"
           >
-            <ShieldAlert className="mr-1 h-3 w-3" /> Audit ready
+            <History className="mr-1 h-3 w-3" /> Event history
           </Badge>
         </CardHeader>
         <CardContent className="px-6 pb-6">
-          {(activity.data ?? []).map((item, index) => (
+          <div className="relative mb-3 mt-2">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+            <Input aria-label="Search activity trail" className="h-10 rounded-xl pl-10 text-xs shadow-none" placeholder="Search activity, asset ID or event type…" value={activitySearch} onChange={event => { setActivitySearch(event.target.value); setActivityLimit(10); }} />
+          </div>
+          {activity.isLoading && <p role="status" className="py-8 text-center text-sm text-slate-500">Loading activity trail…</p>}
+          {activity.isError && <p role="alert" className="py-6 text-sm text-red-700">Activity could not be loaded. <button type="button" className="underline" onClick={() => void activity.refetch()}>Try again</button></p>}
+          {events.slice(0, activityLimit).map(item => (
             <div
               key={item.event.id}
               className="flex gap-4 border-b border-slate-100 py-4 last:border-0"
@@ -851,13 +819,14 @@ export function AuditPage() {
               </div>
             </div>
           ))}
-          {!activity.data?.length && (
+          {!activity.isLoading && !activity.isError && !events.length && (
             <EmptyState
               icon={History}
-              title="No audit events yet"
-              text="The event trail will populate as the workspace is used."
+              title={activitySearch ? "No matching activity" : "No audit events yet"}
+              text={activitySearch ? "Try another asset ID or search term." : "The event trail will populate as the workspace is used."}
             />
           )}
+          {events.length > activityLimit && <div className="mt-5 flex items-center justify-between gap-3"><span className="text-xs text-slate-400">Showing {Math.min(activityLimit, events.length)} of {events.length} events</span><Button variant="outline" onClick={() => setActivityLimit(current => current + 10)}>Show more activity</Button></div>}
         </CardContent>
       </Card>
     </ModuleShell>
@@ -1184,7 +1153,7 @@ export function NotificationsPage() {
 export function ImportPage() {
   const [fileName, setFileName] = useState("");
   const [csv, setCsv] = useState(
-    "Asset Name,Category,Brand,Model,Serial Number,Department,Location,Purchase Cost (INR ₹)\n"
+    "Asset Name,Asset ID,Sub Asset ID,Category,Brand,Model,Serial Number,Department,Location,Purchase Cost (INR ₹)\n"
   );
   const [preview, setPreview] = useState<string[][]>([]);
   const history = trpc.asset.importHistory.useQuery();
@@ -1229,7 +1198,7 @@ export function ImportPage() {
               className="w-full justify-start rounded-xl border-slate-200 bg-white"
               onClick={() =>
                 download(
-                  "Asset Name,Category,Brand,Model,Serial Number,Department,Location,Purchase Cost (INR ₹)\n",
+                  "Asset Name,Asset ID,Sub Asset ID,Category,Brand,Model,Serial Number,Department,Location,Purchase Cost (INR ₹)\n",
                   "asset-import-template.csv",
                   "text/csv"
                 )
@@ -1239,7 +1208,7 @@ export function ImportPage() {
               template
             </Button>
             <div className="rounded-xl bg-[#fbf1f1] p-4 text-xs leading-5 text-[#397c7d]">
-              Required: <b>Asset Name</b>. Purchase Cost values are entered in
+              Required: <b>Asset Name</b>. Asset ID is generated when blank. Sub Asset ID is optional (up to 80 characters). Purchase Cost values are entered in
               Indian Rupees (₹). Asset IDs and QR identities are generated on
               import for blank values. Invalid rows should be corrected before
               committing.

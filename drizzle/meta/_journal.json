@@ -15,6 +15,20 @@
       "when": 1788102614931,
       "tag": "0001_white_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1794550082384,
+      "tag": "0002_add_sub_asset_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1794560887065,
+      "tag": "0003_local_auth_rbac",
+      "breakpoints": true
     }
   ]
 }

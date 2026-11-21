@@ -123,7 +123,7 @@ export async function listAssets(input: { search?: string; status?: string; cate
   const filters = [];
   if (input.search) {
     const term = `%${input.search}%`;
-    filters.push(or(like(assets.assetId, term), like(assets.name, term), like(assets.serialNumber, term), like(assets.brand, term), like(assets.model, term)));
+    filters.push(or(like(assets.assetId, term), like(assets.subAssetId, term), like(assets.name, term), like(assets.serialNumber, term), like(assets.brand, term), like(assets.model, term)));
   }
   if (input.status && input.status !== "all") filters.push(eq(assets.status, input.status as typeof assets.status.enumValues[number]));
   if (input.category && input.category !== "all") filters.push(eq(assets.categoryName, input.category));

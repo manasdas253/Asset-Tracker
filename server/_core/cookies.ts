@@ -45,6 +45,6 @@ export function getSessionCookieOptions(
     // Same-origin application/API requests need no cross-site cookie. Lax also
     // protects the authenticated tRPC mutations from cross-site form requests.
     sameSite: "lax",
-    secure: isSecureRequest(req),
+    secure: process.env.NODE_ENV === "production" || isSecureRequest(req),
   };
 }
