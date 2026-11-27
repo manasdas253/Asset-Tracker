@@ -44,17 +44,6 @@ function toDate(value: unknown) {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-export async function createAssetId() {
-  const db = await getDb();
-  if (!db) return "AST-000001";
-  const latest = await db.select({ assetId: assets.assetId }).from(assets).orderBy(desc(assets.id)).limit(100);
-  const highest = latest.reduce((max, row) => {
-    const match = row.assetId.match(/(\d+)$/);
-    return match ? Math.max(max, Number(match[1])) : max;
-  }, 0);
-  return `AST-${String(highest + 1).padStart(6, "0")}`;
-}
-
 export async function getDashboardData() {
   const db = await getDb();
   if (!db) return { kpis: emptyKpis(), status: [], categories: [], departments: [], locations: [], conditions: [], warranty: [], activity: [] };

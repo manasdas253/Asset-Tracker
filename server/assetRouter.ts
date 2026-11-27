@@ -24,7 +24,6 @@ import {
 } from "../drizzle/schema";
 import {
   CONDITION_LABELS,
-  createAssetId,
   createAuditLog,
   getAssetById,
   getAssetByToken,
@@ -51,7 +50,7 @@ const statusSchema = z.enum(statuses);
 const conditionSchema = z.enum(conditions);
 
 const assetInput = z.object({
-  assetId: z.string().trim().max(80).optional(),
+  assetId: z.string({ error: "Asset ID is required." }).trim().min(1, "Asset ID is required.").max(80, "Asset ID must be at most 80 characters."),
   subAssetId: z.string().trim().max(80).optional(),
   name: z.string().trim().min(2).max(220),
   categoryName: z.string().trim().max(120).optional(),
@@ -123,7 +122,9 @@ async function findAssetOrThrow(id: number) {
 async function createAssetRecord(input: z.infer<typeof assetInput>, req: Parameters<typeof getPublicBaseUrl>[0], source = "Workspace operator") {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." });
-  const assetId = asOptional(input.assetId) ?? await createAssetId();
+  const assetId = input.assetId.trim();
+  const [existing] = await db.select({ id: assets.id }).from(assets).where(eq(assets.assetId, assetId)).limit(1);
+  if (existing) throw new TRPCError({ code: "CONFLICT", message: `Asset ID "${assetId}" already exists.` });
   const dates = parseAssetDates(input);
   const cost = safeNumber(input.purchaseCost);
   const now = new Date();
@@ -193,6 +194,7 @@ export const assetRouter = router({
     try {
       return await createAssetRecord(input, ctx.req);
     } catch (error) {
+      if (error instanceof TRPCError) throw error;
       const message = error instanceof Error && error.message.includes("Duplicate") ? "Asset ID or serial number already exists." : "Could not save the asset. Please review the fields and try again.";
       throw new TRPCError({ code: "CONFLICT", message });
     }
@@ -388,12 +390,14 @@ export const assetRouter = router({
       const subAssetId = get(indexMap.subAssetId);
       if (subAssetId && subAssetId.length > 80) { errors.push({ rowNumber, fieldName: "Sub Asset ID", message: "Sub Asset ID must be at most 80 characters.", rawData: JSON.stringify(row) }); continue; }
       if (!name) { errors.push({ rowNumber, fieldName: "Asset Name", message: "Asset Name is required.", rawData: JSON.stringify(row) }); continue; }
+      const assetId = get(indexMap.assetId);
+      if (!assetId) { errors.push({ rowNumber, fieldName: "Asset ID", message: "Asset ID is required.", rawData: JSON.stringify(row) }); continue; }
+      if (assetId.length > 80) { errors.push({ rowNumber, fieldName: "Asset ID", message: "Asset ID must be at most 80 characters.", rawData: JSON.stringify(row) }); continue; }
       if (serial && (existingSerials.has(serial) || seenSerials.has(serial))) { errors.push({ rowNumber, fieldName: "Serial Number", message: "Serial number is duplicated.", rawData: JSON.stringify(row) }); continue; }
       const cost = safeNumber(get(indexMap.cost));
       if (get(indexMap.cost) && cost === undefined) { errors.push({ rowNumber, fieldName: "Purchase Cost (INR ₹)", message: "Purchase Cost (INR ₹) must be a number.", rawData: JSON.stringify(row) }); continue; }
       try {
         const now = new Date();
-        const assetId = get(indexMap.assetId) ?? await createAssetId();
         const result = await db.insert(assets).values({ assetId, subAssetId, name, categoryName: get(indexMap.category), brand: get(indexMap.brand), model: get(indexMap.model), serialNumber: serial, departmentName: get(indexMap.department), locationName: get(indexMap.location), purchaseCost: cost?.toFixed(2), currency: "USD", condition: "good", status: "available", isDemo: 0, lastActivityAt: now });
         const assetDbId = Number(result[0].insertId);
         await createQr(db, assetDbId, ctx.req);
