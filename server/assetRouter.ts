@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { adminProcedure, publicProcedure, router } from "./_core/trpc";
+import { listQrExportPage, qrExportInput } from "./qrExport";
 import {
   appSettings,
   assetAssignments,
@@ -187,6 +188,7 @@ export const assetRouter = router({
   addDocument: adminProcedure.input(z.object({ assetId: z.number().int().positive(), fileName: z.string().trim().min(1).max(220), fileUrl: z.string().url(), mimeType: z.string().max(120).optional(), sizeBytes: z.number().int().nonnegative().optional() })).mutation(async ({ input }) => { const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available." }); await db.insert(assetDocuments).values({ assetId: input.assetId, fileName: input.fileName, fileUrl: input.fileUrl, mimeType: input.mimeType, sizeBytes: input.sizeBytes }); await db.insert(assetEvents).values({ assetId: input.assetId, eventType: "document_added", title: "Document attached", description: `${input.fileName} was added to the asset record.`, actorName: "Workspace operator", occurredAt: new Date() }); await createAuditLog({ assetId: input.assetId, action: "document_added", entityType: "asset_document", actorName: "Workspace operator", afterData: { fileName: input.fileName, fileUrl: input.fileUrl } }); return getAssetById(input.assetId); }),
   publicByToken: publicProcedure.input(z.object({ token: z.string().trim().min(8).max(96) })).query(({ input, ctx }) => authorizedAssetByToken(ctx, input.token)),
   qrSheet: adminProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100) })).query(async ({ input }) => { const details = await Promise.all(input.ids.map(id => getAssetById(id))); return details.filter((detail): detail is NonNullable<typeof detail> => Boolean(detail)).map(detail => ({ asset: detail.asset, qr: detail.qr })); }),
+  qrExport: adminProcedure.input(qrExportInput).query(({ input }) => listQrExportPage(input)),
   create: adminProcedure.input(assetInput).mutation(async ({ input, ctx }) => {
     try {
       return await createAssetRecord(input, ctx.req);
