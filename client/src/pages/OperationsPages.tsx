@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { QrExportButton } from "@/components/QrExportButton";
 import { formatINR, formatINRForExport } from "@/lib/currency";
 import { downloadMovementReportXlsx, type MovementRow } from "@/lib/movementReportXlsx";
 import { Badge } from "@/components/ui/badge";
@@ -459,6 +460,7 @@ export function QrLabelsPage() {
           >
             {selected.length === rows.length ? "Clear all" : "Select all"}
           </Button>
+          <QrExportButton label="Export all QR (ZIP)" className="rounded-xl border-[#e7bfc2] bg-white text-xs font-bold text-[#a50f16]" />
           <Button
             onClick={print}
             disabled={!ready}
